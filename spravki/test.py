@@ -1,140 +1,145 @@
 import telebot
 import sqlite3
-import logging
 
-logging.basicConfig(filename='bot.log', level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# Инициализация бота
+bot = telebot.TeleBot('6609385582:AAHUy3ysMcw2-Egu6Ri3NC1_sVrK4by9hwg')
 
-bot = telebot.TeleBot('6342840039:AAF_FMrFwGXcTRHCV0oiOZzaVfz3-CLMYns')
-
-user_states = {}
-
-def get_user_group(user_login):
+# Функция для получения всех заявок в ожидании из базы данных
+def get_pending_requests():
     conn = sqlite3.connect('spravki.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT groups FROM spravki WHERE login=?', (user_login,))
-    user_group = cursor.fetchone()
+    cursor.execute('SELECT * FROM spravki WHERE status=?', ('В ожидании',))
+    requests = cursor.fetchall()
     conn.close()
-    return user_group[0] if user_group else None
+    return requests
 
-def get_max_request_number():
+def get_specific_request(request_number):
     conn = sqlite3.connect('spravki.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT MAX(request_number) FROM spravki')
-    max_number = cursor.fetchone()[0]
+    cursor.execute('SELECT * FROM spravki WHERE request_number=?', (request_number,))
+    specific_request = cursor.fetchone()
     conn.close()
-    return str(max_number) if max_number else "0"
+    return specific_request
 
-def get_request_status(request_number):
+def get_oldest_spravka():
     conn = sqlite3.connect('spravki.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT status FROM spravki WHERE request_number=?', (request_number,))
-    status = cursor.fetchone()
+    cursor.execute('SELECT * FROM spravki ORDER BY submission_time ASC LIMIT 1')
+    oldest_spravka = cursor.fetchone()
     conn.close()
-    return status[0] if status else None
+    return oldest_spravka
 
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    user_id = message.from_user.id
-    user_states[user_id] = {'state': 'waiting_for_fio'}
-    bot.reply_to(message, "Отлично! Теперь отправь свои ФИО.")
+# Функция для получения количества заявок в ожидании
+def get_pending_requests_count():
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM spravki WHERE status=?', ('В ожидании',))
+    pending_requests_count = cursor.fetchone()[0]
+    conn.close()
+    return pending_requests_count
 
+# Функция для обновления статуса заявки
+def update_request_status(request_number):
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE spravki SET status=? WHERE request_number=?', ('Справка готова', request_number))
+    conn.commit()
+    conn.close()
+
+# Функция для получения всех готовых справок
+def get_ready_spravki():
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM spravki WHERE status=?', ('Справка готова',))
+    ready_spravki = cursor.fetchall()
+    conn.close()
+    return ready_spravki
+
+def update_spravka_status(request_number, new_status):
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE spravki SET status=? WHERE request_number=?', (new_status, request_number))
+    conn.commit()
+    conn.close()
+
+def delete_spravka(request_number):
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM spravki WHERE request_number=?', (request_number,))
+    conn.commit()
+    conn.close()
+
+def delete_all_spravki():
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM spravki')
+    conn.commit()
+    conn.close()
+
+# Список команд с описаниями
+commands = [
+    {'command': '/start', 'description': 'Начать процесс получения справки'},
+    {'command': '/nomer <номер_заявки>', 'description': 'Проверить и изменить статус заявки'},
+    {'command': '/total', 'description': 'Показать общее количество справок (в ожидании)'},
+    {'command': '/spravki', 'description': 'Показать справки в ожидании'},
+    {'command': '/nomerall <номер_заявки>', 'description': 'Посмотреть конкретную заявку'},
+    {'command': '/r_spravki', 'description': 'Показать готовые справки'},
+    {'command': '/nomer_nr <номер_заявки>', 'description': 'Переделать готовую справку в ожидание'},
+    {'command': '/nomer_d <номер_заявки>', 'description': 'Удалить справку'},
+    {'command': '/nomer_d_all', 'description': 'Удалить все справки'},
+    {'command': '/long', 'description': 'Показать самую старую справку'},
+    {'command': '/', 'description': 'Показать все доступные команды'}
+]
+
+# Функция для вывода списка всех команд
+def list_all_commands(message):
+    commands_text = "\n".join([f"{cmd['command']} - {cmd['description']}" for cmd in commands])
+    bot.reply_to(message, f"Доступные команды:\n{commands_text}")
+
+# Обработчик команды /
+@bot.message_handler(commands=[''])
+def list_commands(message):
+    list_all_commands(message)
+
+# Обработчик команды /spravki
+@bot.message_handler(commands=['spravki'])
+def send_pending_requests(message):
+    # Получаем все заявки в ожидании
+    pending_requests = get_pending_requests()
+
+    # Если есть заявки в ожидании, отправляем их пользователю
+    if pending_requests:
+        for request in pending_requests:
+            request_id, text, login, fio, groups, request_number, status, submission_time = request
+            response_message = f"Номер заявки: {request_number}\nТекст справки: {text}\nСтатус: {status}\nФИО: {fio}\nГруппа: {groups}\nДата подачи: {submission_time}\n"
+            bot.reply_to(message, response_message)
+    else:
+        bot.reply_to(message, "Нет заявок в ожидании")
+
+# Обработчик команды /status
 @bot.message_handler(commands=['status'])
-def check_status(message):
-    user_id = message.from_user.id
-    user_states[user_id] = {'state': 'waiting_for_request_number'}
-    bot.reply_to(message, "Введите номер заявки для проверки статуса.")
-
-@bot.message_handler(func=lambda message: True)
-def receive_statement(message):
-    user_id = message.from_user.id
-    user_state = user_states.get(user_id, {})
-
-    if 'state' not in user_state:
-        bot.reply_to(message, "Не правильная команда. Напишите сначала /start")
+def check_request_status(message):
+    try:
+        request_number = message.text.split()[1]
+    except IndexError:
+        bot.reply_to(message, "Пожалуйста, укажите номер заявки после команды /status")
         return
 
-    if user_state['state'] == 'waiting_for_fio':
-        user_state['fio'] = message.text
-        user_login = message.from_user.username
+    specific_request = get_specific_request(request_number)
 
-        user_group = get_user_group(user_login)
+    if specific_request:
+        request_id, text, login, fio, groups, request_number, status, submission_time = specific_request
+        response_message = f"Номер заявки: {request_number}\nСтатус: {status}\n"
+        bot.reply_to(message, response_message)
+    else:
+        bot.reply_to(message, f"Заявка с номером {request_number} не найдена.")
 
-        if user_group:
-            user_state['group'] = user_group
-            max_request_number = int(get_max_request_number())
-            user_state['request_number'] = str(max_request_number + 1)
-            user_state['state'] = 'waiting_for_statement'
-            bot.reply_to(message, f"Отлично! Ваша группа: {user_group}. Теперь отправь текст справки.")
-        else:
-            user_state['state'] = 'waiting_for_group'
-            bot.reply_to(message, "Отлично! Теперь отправь номер своей группы.")
-        return
-
-    if user_state['state'] == 'waiting_for_group':
-        user_state['group'] = message.text
-        user_state['state'] = 'waiting_for_statement'
-        max_request_number = int(get_max_request_number())
-        user_state['request_number'] = str(max_request_number + 1)
-        bot.reply_to(message, f"Хорошо! Номер вашей заявки: {user_state['request_number']}. Теперь отправь текст справки.")
-        return
-
-    if user_state['state'] == 'waiting_for_statement':
-        user_login = message.from_user.username
-
-        if user_login is None:
-            bot.reply_to(message, "У вас не указан username в настройках Telegram. Пожалуйста, установите его, чтобы мы могли вас идентифицировать.")
-            return
-
-        statement = message.text
-
-        conn = sqlite3.connect('spravki.db')
-        cursor = conn.cursor()
-
-        cursor.execute('INSERT INTO spravki (text, login, fio, groups, request_number, status) VALUES (?, ?, ?, ?, ?, ?)', (statement, user_login, user_state['fio'], user_state['group'], user_state['request_number'], 'В ожидании'))
-        conn.commit()
-
-        conn.close()
-
-        bot.reply_to(message, f"Спасибо за справку! Мы ее получили и рассмотрим в ближайшее время. Номер вашей заявки: {user_state['request_number']}")
-
-        user_states[user_id] = {}
-        bot.send_message(user_id, "Для отправки новой справки нажмите /start")
-        return
-
-    if user_state['state'] == 'waiting_for_request_number':
-        request_number = message.text
-        status = get_request_status(request_number)
-        if status is not None:
-            bot.reply_to(message, f"Статус заявки №{request_number}: {status}")
-        else:
-            bot.reply_to(message, f"Заявка с номером №{request_number} не найдена.")
-
-@bot.message_handler(func=lambda message: message.text.lower() == '/help')
-def send_help(message):
-    user_id = message.from_user.id
-    user_state = user_states.get(user_id, {})
-
-    if 'state' not in user_state:
-        bot.reply_to(message, "Не правильная команда. Напишите сначала /start")
-        return
-
-    bot.reply_to(message, "Этот бот предназначен для получения справок. Вот как им пользоваться:\n\n"
-                        "/start - начать процесс получения справки\n"
-                        "/status <номер_заявки> - проверить статус заявки\n"
-                        "/help - получить справку о доступных командах\n\n"
-                        "Для получения справки сначала используйте /start.")
-    if user_state['state'] == 'waiting_for_fio':
-        user_state['state'] = 'waiting_for_fio'
-    elif user_state['state'] == 'waiting_for_group':
-        user_state['state'] = 'waiting_for_group'
-    elif user_state['state'] == 'waiting_for_statement':
-        user_state['state'] = 'waiting_for_statement'
-    elif user_state['state'] == 'waiting_for_request_number':
-        user_state['state'] = 'waiting_for_request_number'
 
 if __name__ == "__main__":
     try:
+        print("Бот запущен...")
         bot.infinity_polling()
+    
     except Exception as e:
         print(f"Ошибка: {e}")
+

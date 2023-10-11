@@ -1,141 +1,256 @@
 import telebot
 import sqlite3
-import logging
+
+# Инициализация бота
+bot = telebot.TeleBot('6609385582:AAHUy3ysMcw2-Egu6Ri3NC1_sVrK4by9hwg')
 
 
-logging.basicConfig(filename='bot.log', level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+def is_admin(user_id):
+    # Здесь может быть ваш код для проверки администратора
+    return user_id == 6635880006 # Замените 6635880006 на ID вашего администратора
 
-
-bot = telebot.TeleBot('6342840039:AAF_FMrFwGXcTRHCV0oiOZzaVfz3-CLMYns')
-
-# Словарь для хранения текущего состояния пользователей
-user_states = {}
-
-# Функция для проверки существования пользователя в базе данных и получения его группы
-def get_user_group(user_login):
+# Функция для получения всех заявок в ожидании из базы данных
+def get_pending_requests():
     conn = sqlite3.connect('spravki.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT groups FROM spravki WHERE login=?', (user_login,))
-    user_group = cursor.fetchone()
+    cursor.execute('SELECT * FROM spravki WHERE status=?', ('В ожидании',))
+    requests = cursor.fetchall()
     conn.close()
-    return user_group[0] if user_group else None
+    return requests
 
-# Функция для получения статуса заявки
-def get_request_status(request_number):
+def get_specific_request(request_number):
     conn = sqlite3.connect('spravki.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT status FROM spravki WHERE request_number=?', (request_number,))
-    status = cursor.fetchone()
+    cursor.execute('SELECT * FROM spravki WHERE request_number=?', (request_number,))
+    specific_request = cursor.fetchone()
     conn.close()
-    return status[0] if status else None
+    return specific_request
 
+def get_oldest_spravka():
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM spravki ORDER BY submission_time ASC LIMIT 1')
+    oldest_spravka = cursor.fetchone()
+    conn.close()
+    return oldest_spravka
+
+
+# Функция для получения количества заявок в ожидании
+def get_pending_requests_count():
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT COUNT(*) FROM spravki WHERE status=?', ('В ожидании',))
+    pending_requests_count = cursor.fetchone()[0]
+    conn.close()
+    return pending_requests_count
+
+# Функция для обновления статуса заявки
+def update_request_status(request_number):
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE spravki SET status=? WHERE request_number=?', ('Справка готова', request_number))
+    conn.commit()
+    conn.close()
 
 @bot.message_handler(commands=['start'])
-def send_welcome(message):
-    user_id = message.from_user.id
-    user_states[user_id] = {'state': 'waiting_for_fio'}
-    bot.reply_to(message, "Отлично ! Теперь отправь свои ФИО.")
+def send_help(message):
+    user_login = message.from_user.username
+    bot.reply_to(message, f"\n\U0001F47E: Здравствуйте, {user_login}, напишите /help или /spravki для начала работы")
 
-@bot.message_handler(commands=['status'])
-def check_status(message):
-    user_id = message.from_user.id
-    user_states[user_id] = {'state': 'waiting_for_request_number'}
-    bot.reply_to(message, "Введите номер заявки для проверки статуса.")
-
-@bot.message_handler(func=lambda message: True)
-def receive_statement(message):
-    user_id = message.from_user.id
-    user_state = user_states.get(user_id, {})
-
-    if 'state' not in user_state:
-        bot.reply_to(message, "Не правильная команда. Напишите сначала /start")
-        return
-
-    if user_state['state'] == 'waiting_for_fio':
-        user_state['fio'] = message.text
-        user_login = message.from_user.username  # Здесь используется username в качестве логина
-
-        # Проверяем, существует ли пользователь с таким логином в базе данных
-        user_group = get_user_group(user_login)
-
-        if user_group:
-            user_state['group'] = user_group
-            user_state['request_number'] = None  # Сбрасываем номер заявки
-            user_state['state'] = 'waiting_for_statement'
-            bot.reply_to(message, f"Отлично! Ваша группа: {user_group}. Теперь отправь текст справки.")
-        else:
-            user_state['state'] = 'waiting_for_group'
-            bot.reply_to(message, "Отлично! Теперь отправь номер своей группы.")
-        return
-
-    if user_state['state'] == 'waiting_for_group':
-        user_state['group'] = message.text
-        user_state['state'] = 'waiting_for_statement'
-
-        # Генерируем уникальный номер заявки
-        conn = sqlite3.connect('spravki.db')
-        cursor = conn.cursor()
-        cursor.execute('SELECT MAX(id) FROM spravki')
-        max_id = cursor.fetchone()[0]
-        conn.close()
-
-        user_state['request_number'] = max_id + 1 if max_id else 1
-
-        bot.reply_to(message, f"Хорошо! Номер вашей заявки: {user_state['request_number']}. Теперь отправь текст справки.")
-        return
-
-    if user_state['state'] == 'waiting_for_statement':
-        user_login = message.from_user.username  # Здесь используется username в качестве логина
-
-        if user_login is None:
-            bot.reply_to(message, "У вас не указан username в настройках Telegram. Пожалуйста, установите его, чтобы мы могли вас идентифицировать.")
+    if user_login is None:
+            bot.reply_to(message, "\U0001F47E:Здравствуйте, напишите /help или /spravki для начала работы")
             return
 
-        statement = message.text
+# Обработчик команды /spravki
+@bot.message_handler(commands=['spravki'])
+def send_pending_requests(message):
+    # Получаем все заявки в ожидании
+    pending_requests = get_pending_requests()
 
-        # Подключение к базе данных
-        conn = sqlite3.connect('spravki.db')
-        cursor = conn.cursor()
+    # Если есть заявки в ожидании, отправляем их пользователю
+    if pending_requests:
+        for request in pending_requests:
+            request_id, text, login, fio, groups, request_number, status, submission_time = request
+            response_message = f"Номер заявки: {request_number}\nТекст справки: {text}\nСтатус: {status}\nФИО: {fio}\nГруппа: {groups}\nДата подачи: {submission_time}\n"
+            bot.reply_to(message, response_message)
+    else:
+        bot.reply_to(message, "Нет заявок в ожидании")
 
-        # Сохранение справки в базе данных
-        cursor.execute('INSERT INTO spravki (text, login, fio, groups, request_number, status) VALUES (?, ?, ?, ?, ?, ?)', (statement, user_login, user_state['fio'], user_state['group'], user_state['request_number'], 'В ожидании'))
-        conn.commit()
-
-        # Закрытие соединения
-        conn.close()
-
-        bot.reply_to(message, f"Спасибо за справку! Мы ее получили и рассмотрим в ближайшее время. Номер вашей заявки: {user_state['request_number']}")
-
-        # Сбрасываем состояние пользователя и предлагаем начать заново
-        user_states[user_id] = {}
-        bot.send_message(user_id, "Для отправки новой справки нажмите /start")
+# Обработчик команды /nomer
+@bot.message_handler(commands=['nomer'])
+def set_request_ready(message):
+    # Парсим номер из сообщения
+    try:
+        request_number = message.text.split()[1]
+    except IndexError:
+        bot.reply_to(message, "Пожалуйста, укажите номер заявки после команды /nomer")
         return
 
-    if user_state['state'] == 'waiting_for_request_number':
-        request_number = message.text
-        if not request_number.startswith('/'):  # Ignore messages starting with "/"
-            status = get_request_status(request_number)
-            if status is not None:
-                bot.reply_to(message, f"Статус заявки №{request_number}: {status}")
-            else:
-                bot.reply_to(message, f"Заявка с номером №{request_number} не найдена.")
+    # Обновляем статус заявки
+    update_request_status(request_number)
+    bot.reply_to(message, f"Статус заявки №{request_number} успешно обновлен. Справка готова!")
 
 
+@bot.message_handler(commands=['nomerall'])
+def view_specific_request(message):
+    try:
+        request_number = message.text.split()[1]
+    except IndexError:
+        bot.reply_to(message, "Пожалуйста, укажите номер заявки после команды /nomerall")
+        return
+
+    specific_request = get_specific_request(request_number)
+
+    if specific_request:
+        request_id, text, login, fio, groups, request_number, status, submission_time = specific_request
+        response_message = f"Полная заявка\nНомер заявки: {request_number}\n\nТекст справки: {text}\n\n\nСтатус: {status}\n\nФИО: {fio}\n\nГруппа: {groups}\n\nДата подачи: {submission_time}\n\nЛогин в телеграмме: {login}\n "
+        bot.reply_to(message, response_message)
+    else:
+        bot.reply_to(message, f"Заявка с номером {request_number} не найдена.")
+
+@bot.message_handler(commands=['r_spravki'])
+def send_ready_spravki(message):
+    # Получаем все готовые справки
+    ready_spravki = get_ready_spravki()
+
+    # Если есть готовые справки, отправляем их пользователю
+    if ready_spravki:
+        for spravka in ready_spravki:
+            spravka_id, text, login, fio, groups, request_number, status, submission_time = spravka
+            response_message = f"Номер заявки: {request_number}\n\nТекст справки: {text}\n\nСтатус: {status}\n\nФИО: {fio}\n\nГруппа: {groups}\n\nДата подачи: {submission_time}\n"
+            bot.reply_to(message, response_message)
+    else:
+        bot.reply_to(message, "Нет готовых справок")
+
+def get_ready_spravki():
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM spravki WHERE status=?', ('Справка готова',))
+    ready_spravki = cursor.fetchall()
+    conn.close()
+    return ready_spravki
+
+
+def update_spravka_status(request_number, new_status):
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE spravki SET status=? WHERE request_number=?', (new_status, request_number))
+    conn.commit()
+    conn.close()
+
+@bot.message_handler(commands=['nomer_nr'])
+def set_spravka_pending(message):
+    # Парсим номер из сообщения
+    try:
+        request_number = message.text.split()[1]
+    except IndexError:
+        bot.reply_to(message, "Пожалуйста, укажите номер заявки после команды /nomer_nr\n/nomer_nr [пробел] [номер заявки]")
+        return
+
+    # Обновляем статус справки
+    update_spravka_status(request_number, 'В ожидании')
+    bot.reply_to(message, f"Статус справки №{request_number} успешно обновлен. Справка в ожидании!")
+
+
+def delete_spravka(request_number):
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM spravki WHERE request_number=?', (request_number,))
+    conn.commit()
+    conn.close()
+
+@bot.message_handler(commands=['nomer_d'])
+def delete_spravka_command(message):
+    # Проверяем, является ли пользователь администратором
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "У вас нет прав для выполнения этой команды.")
+        return
+
+    # Парсим номер из сообщения
+    try:
+        request_number = message.text.split()[1]
+    except IndexError:
+        bot.reply_to(message, "Пожалуйста, укажите номер заявки после команды /nomer_d")
+        return
+
+    # Удаляем справку из базы данных
+    delete_spravka(request_number)
+    bot.reply_to(message, f"Справка №{request_number} успешно удалена.")
+
+    # Удаляем справку из базы данных
+    delete_spravka(request_number)
+    bot.reply_to(message, f"Справка №{request_number} успешно удалена.")
+
+
+def delete_all_spravki():
+    conn = sqlite3.connect('spravki.db')
+    cursor = conn.cursor()
+    cursor.execute('DELETE FROM spravki')
+    conn.commit()
+    conn.close()
+
+# Обработчик команды /nomer_d_all
+@bot.message_handler(commands=['nomer_d_all'])
+def delete_all_spravki_command(message):
+    # Проверяем, является ли пользователь администратором
+    if not is_admin(message.from_user.id):
+        bot.reply_to(message, "У вас нет прав для выполнения этой команды.")
+        return
+
+    # Удаляем все справки из базы данных
+    delete_all_spravki()
+    bot.reply_to(message, "Все справки успешно удалены.")
+
+@bot.message_handler(commands=['long'])
+def send_oldest_spravka(message):
+    oldest_spravka = get_oldest_spravka()
+
+    if oldest_spravka:
+        request_id, text, login, fio, groups, request_number, status, submission_time = oldest_spravka
+        response_message = f"Номер заявки: {request_number}\n\nТекст справки: {text}\n\nСтатус: {status}\n\nФИО: {fio}\n\nГруппа: {groups}\n\nДата подачи: {submission_time}\n"
+        bot.reply_to(message, response_message)
+    else:
+        bot.reply_to(message, "Нет доступных справок.")
+
+
+
+# Обработчик команды /total
+@bot.message_handler(commands=['total'])
+def send_total_requests(message):
+    total_requests_count = len(get_pending_requests())
+    pending_requests_count = get_pending_requests_count()
+
+    bot.reply_to(message, f"Всего заявок: {total_requests_count}\n Cправок в ожидании: {pending_requests_count}")
 
 @bot.message_handler(commands=['help'])
 def send_help(message):
-        user_id = message.from_user.id
-        bot.reply_to(message, "Этот бот предназначен для получения справок. Вот как им пользоваться:\n\n"
-                            "/start - начать процесс получения справки\n"
-                            "/status <номер_заявки> - проверить статус заявки\n"
-                            "/help - получить справку о доступных командах\n\n"
-                            "Для получения справки сначала используйте /start.")
+    user_id = message.from_user.id
+    bot.reply_to(message, """Доступные команды:
+/start - Начать процесс получения справки
+/nomer <номер_заявки> - Проверить и изменить статус заявки
+/total - Показать общее количество справок (в ожидании)
+/spravki - Показать справки в ожидании
+/nomerall <номер_заявки> - Посмотреть конкретную заявку
+/r_spravki - Показать готовые справки
+/nomer_nr <номер_заявки> - Переделать готовую справку в ожидание
+/nomer_d <номер_заявки> - Удалить справку
+/nomer_d_all - Удалить все справки
+/long - Показать самую старую справку
+/help - Показать все доступные команды""")
+
+# Обработчик для команд, начинающихся с /
+@bot.message_handler(func=lambda message: True)
+def unknown_command(message):
+    bot.reply_to(message, "Неизвестная команда. Напишите /help для получения справки.\n")
+
+# Обработчик команды /help
+
 
 # Запуск бота
-
 if __name__ == "__main__":
     try:
+        print("Бот запущен...")
         bot.infinity_polling()
+    
     except Exception as e:
         print(f"Ошибка: {e}")

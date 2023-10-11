@@ -41,10 +41,21 @@ def send_welcome(message):
     bot.reply_to(message, "\U0001F47E: Отлично! Теперь отправь своё ФИО.")
 
 @bot.message_handler(commands=['status'])
-def check_status(message):
+def start_check_status(message):
     user_id = message.from_user.id
     user_states[user_id] = {'state': 'waiting_for_request_number'}
-    bot.reply_to(message, "Введите номер заявки для проверки статуса.")
+    
+    # Проверяем, если номер заявки был указан вместе с командой /status
+    if len(message.text.split()) == 2 and message.text.split()[1].isdigit():
+        request_number = message.text.split()[1]
+        status = get_request_status(request_number)
+        if status is not None:
+            bot.reply_to(message, f"Статус заявки №{request_number}: {status}")
+        else:
+            bot.reply_to(message, f"Заявка с номером №{request_number} не найдена.\n/help там имеется пример")
+        user_states[user_id] = {}
+    else:
+        bot.reply_to(message, "Введите номер заявки для проверки статуса.")
 
 @bot.message_handler(func=lambda message: message.text.lower() == '/help')
 def send_help(message):
@@ -52,7 +63,24 @@ def send_help(message):
                         "/start - начать процесс получения справки\n"
                         "/status <номер_заявки> - проверить статус заявки\n"
                         "/help - получить справку о доступных командах\n\n"
+                        "/primer_status - пример статуса\n"
+                        "/primer_spravka - пример справки\n\n"
                         "Для получения справки сначала используйте /start.")
+
+
+@bot.message_handler(commands=['primer_status'])
+def send_primer_spravka(message):
+    bot.reply_to(message, "Пример как написать /status (2 Версии)\n/status [номер заявки] - в одном сообщении\n/status  *в следующем сообщении*  [номер заявки]\n\n Пробуйте!")
+
+@bot.message_handler(commands=['primer_spravka'])
+def send_primer_spravka(message):
+    bot.reply_to(message, "Пример справки:\n"
+                          "Номер заявки: [выдадут]\n"
+                          "Текст справки: Заявка на выдачу справки\n"
+                          "Статус: В ожидании/Справка готова\n"
+                          "ФИО: Иванов Иван Иванович\n"
+                          "Группа: ИСП-4\n\n"
+                          "Пробуйте!")
 
 @bot.message_handler(func=lambda message: True)
 def receive_statement(message):
@@ -60,7 +88,7 @@ def receive_statement(message):
     user_state = user_states.get(user_id, {})
 
     if 'state' not in user_state:
-        bot.reply_to(message, "Не правильная команда. Напишите сначала /start")
+        bot.reply_to(message, "Не правильная команда. Напишите сначала /start или /help")
         return
 
     if user_state['state'] == 'waiting_for_fio':
@@ -118,7 +146,7 @@ def receive_statement(message):
         if status is not None:
             bot.reply_to(message, f"Статус заявки №{request_number}: {status}")
         else:
-            bot.reply_to(message, f"Заявка с номером №{request_number} не найдена.")
+            bot.reply_to(message, f"Заявка с номером №{request_number} не найдена.\n/help там имеется пример")
 
 
 
